@@ -1,21 +1,35 @@
-archive_path=/volume1/archives/archive1.zip
-target_path=/volume1/unarchived/1/2/3
+lock_path=process_archive.lock
+db_path=process_archive.db
+sources_expression=/volume1/VMTEST/archives/*.zip
+target_path=/volumeUSB1/usbshare/unarchived/1
 
-generate_archive_temp_path() {
-   echo "/volume1/archives/archive1_"$(date +"%s")".zip"
-}
-
-report_error() {
-   echo "Error!"
-}
-
-trap '[ $? -eq 0 ] && exit 0 || report_error' EXIT
-
-if [ -f $archive_path ]; then
-   temp_path=$(generate_archive_temp_path)
-   mv $archive_path $temp_path \
-   && rm -rf $target_path \
-   && mkdir -p $target_path \
-   && unzip $temp_path -d $target_path \
-   && rm $temp_path
+if { set -C; 2>/dev/null >$lock_path; }; then
+   trap "rm -f $lock_path" EXIT
+else
+   echo "Lock file exists, exiting"
+   exit
 fi
+
+sources=($(ls -tr $sources_expression 2> /dev/null))
+if [ $? -ne 0 ]; then
+   echo "No sources found, exiting"
+   exit
+fi
+
+src=${sources[-1]}
+if /var/packages/DiagnosisTool/target/tool/lsof -f -- $src >/dev/null 2>&1; then
+   echo "Source in use detected (sync in progress?), exiting"
+   exit
+fi
+
+src_info=$(md5sum $src)
+md5_sum=$(echo $src_info | cut -f 1 -d' ')
+if grep $md5_sum $db_path >/dev/null 2>&1; then
+   echo "No new source found, exiting"
+   exit
+fi
+
+rm -rf $target_path \
+&& mkdir -p $target_path \
+&& 7z x $src -o$target_path -y >/dev/null \
+&& echo $src_info >> $db_path
